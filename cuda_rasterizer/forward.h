@@ -59,7 +59,10 @@ namespace FORWARD
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
-		float* out_color);
+		float* out_color
+		int num_samples,
+		uint32_t* random_pix, // input pixels
+		float* alpha_vals);
 }
 
 

@@ -270,7 +270,10 @@ renderCUDA(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	int num_samples,
+	uint32_t* __restrict__ random_pix, // input pixels
+	float* __restrict__ alpha_vals)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -301,6 +304,19 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+
+	// check if the current pixel is in the selected list
+	bool selected = false;
+	int pos = 0;
+	uint32_t contrib = 0;
+    for (int i = 0; i < num_samples; i++) 
+	{
+        if (random_pix[i] == pix_id) {
+            selected = true;
+			pos = i;
+            break;
+        }
+    }
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -350,6 +366,14 @@ renderCUDA(
 				continue;
 			}
 
+			// if the pixid matches 
+			if (selected && contrib < 100) 
+			{
+				int alpha_index = pos * 100 + contrib;
+				alpha_vals[alpha_index] = alpha; 
+				contrib++;
+			}
+
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
@@ -372,7 +396,6 @@ renderCUDA(
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 	}
 }
-
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
@@ -384,7 +407,10 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	int num_samples,
+	uint32_t* random_pix,
+	float* alpha_vals)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -396,7 +422,10 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
-		out_color);
+		out_color,
+		num_samples,
+		random_pix,
+		alpha_vals);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

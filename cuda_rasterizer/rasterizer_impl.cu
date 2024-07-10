@@ -14,6 +14,7 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <random>
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -319,6 +320,29 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+
+	std::mt19937 gen();
+	std::uniform_int_distribution<> dis(0, width * height);
+	int num_samples = 100;
+	int num_gaussians_per_sample = 100;
+
+	// generate random numbers
+	uint32_t* random_pix = (uint32_t*)malloc(num_samples * sizeof(uint32_t));
+	float* alpha_vals = (float*)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
+	for (int i = 0; i < num_samples ; i++) 
+	{
+		random_pix[i] = dis(gen);
+	}
+	
+
+	// transfer the memory to gpu
+	uint32_t* d_random_pix;
+	float* d_alpha_vals;
+	CHECK_CUDA(cudaMalloc(&d_random_pix, num_samples * sizeof(uint32_t)));
+	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float)));
+	CHECK_CUDA(cudaMemcpy(d_random_pix, random_pix, num_samples * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice));
+	
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -330,7 +354,33 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		num_samples,
+		d_random_pix,
+		d_alpha_vals), debug)
+
+	// transfer back to host 
+	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost));
+	CHECK_CUDA(cudaMemcpy(random_pix, d_random_pix, num_samples * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
+	// output he memory to a file
+	std::ofstream myfile;
+	myfile.open("alpha_vals.csv");
+	for (int i = 0; i < num_samples; i++)
+	{
+		myfile << random_pix[i] << " ";
+		for (int j = 0; j < num_gaussians_per_sample; j++)
+		{
+			myfile << alpha_vals[i * num_gaussians_per_sample + j] << " ";
+		}
+		myfile << std::endl;
+	}
+
+	// free the memory
+	CHECK_CUDA(cudaFree(d_random_pix));
+	CHECK_CUDA(cudaFree(d_alpha_vals));
+	free(random_pix);
+	free(alpha_vals);
 
 	return num_rendered;
 }
