@@ -338,10 +338,10 @@ int CudaRasterizer::Rasterizer::forward(
 	// transfer the memory to gpu
 	uint32_t* d_random_pix;
 	float* d_alpha_vals;
-	CHECK_CUDA(cudaMalloc(&d_random_pix, num_samples * sizeof(uint32_t)));
-	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float)));
-	CHECK_CUDA(cudaMemcpy(d_random_pix, random_pix, num_samples * sizeof(uint32_t), cudaMemcpyHostToDevice));
-	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice));
+	CHECK_CUDA(cudaMalloc(&d_random_pix, num_samples * sizeof(uint32_t)), debug);
+	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float)), debug);
+	CHECK_CUDA(cudaMemcpy(d_random_pix, random_pix, num_samples * sizeof(uint32_t), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice), debug);
 	
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
@@ -360,8 +360,8 @@ int CudaRasterizer::Rasterizer::forward(
 		d_alpha_vals), debug)
 
 	// transfer back to host 
-	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost));
-	CHECK_CUDA(cudaMemcpy(random_pix, d_random_pix, num_samples * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(random_pix, d_random_pix, num_samples * sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
 
 	// output he memory to a file
 	std::ofstream myfile;
@@ -377,8 +377,8 @@ int CudaRasterizer::Rasterizer::forward(
 	}
 
 	// free the memory
-	CHECK_CUDA(cudaFree(d_random_pix));
-	CHECK_CUDA(cudaFree(d_alpha_vals));
+	CHECK_CUDA(cudaFree(d_random_pix), debug);
+	CHECK_CUDA(cudaFree(d_alpha_vals), debug);
 	free(random_pix);
 	free(alpha_vals);
 
