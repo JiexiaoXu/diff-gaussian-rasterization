@@ -339,7 +339,7 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 
 			uint64_t coll_key = point_list_keys[range.x + progress];
-			uint32_t depth32bits = static_cast<uint32_t>(key & 0xFFFFFFFF);
+			uint32_t depth32bits = static_cast<uint32_t>(coll_key & 0xFFFFFFFF);
 			depth = *reinterpret_cast<float*>(&depth32bits);
 		}
 		block.sync();
