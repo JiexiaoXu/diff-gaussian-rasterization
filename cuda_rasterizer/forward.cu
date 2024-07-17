@@ -273,7 +273,8 @@ renderCUDA(
 	float* __restrict__ out_color,
 	int num_samples,
 	uint32_t* __restrict__ random_pix, // input pixels
-	float* __restrict__ alpha_vals)
+	float* __restrict__ alpha_vals,
+	float* __restrict__ depth_vals)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();

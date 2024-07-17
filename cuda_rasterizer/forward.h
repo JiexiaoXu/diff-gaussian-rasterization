@@ -62,7 +62,8 @@ namespace FORWARD
 		float* out_color,
 		int num_samples,
 		uint32_t* random_pix, // input pixels
-		float* alpha_vals);
+		float* alpha_vals,
+		float* depth_vals);
 }
 
 

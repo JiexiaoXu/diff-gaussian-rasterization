@@ -275,7 +275,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
-	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
+	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug);
 
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
 	int num_rendered;
@@ -296,7 +296,7 @@ int CudaRasterizer::Rasterizer::forward(
 		binningState.point_list_unsorted,
 		radii,
 		tile_grid)
-	CHECK_CUDA(, debug)
+	CHECK_CUDA(, debug);
 
 	int bit = getHigherMsb(tile_grid.x * tile_grid.y);
 
@@ -306,7 +306,7 @@ int CudaRasterizer::Rasterizer::forward(
 		binningState.sorting_size,
 		binningState.point_list_keys_unsorted, binningState.point_list_keys,
 		binningState.point_list_unsorted, binningState.point_list,
-		num_rendered, 0, 32 + bit), debug)
+		num_rendered, 0, 32 + bit), debug);
 
 	CHECK_CUDA(cudaMemset(imgState.ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
 
@@ -321,7 +321,7 @@ int CudaRasterizer::Rasterizer::forward(
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 
-	std::mt19937 gen();
+	std::mt19937 gen;
 	std::uniform_int_distribution<> dis(0, width * height);
 	int num_samples = 100;
 	int num_gaussians_per_sample = 100;
@@ -329,19 +329,28 @@ int CudaRasterizer::Rasterizer::forward(
 	// generate random numbers
 	uint32_t* random_pix = (uint32_t*)malloc(num_samples * sizeof(uint32_t));
 	float* alpha_vals = (float*)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
+	float* depth_vals = (float*)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
 	for (int i = 0; i < num_samples ; i++) 
 	{
 		random_pix[i] = dis(gen);
 	}
-	
+
+	// fill alphas and depth with -1 
+	for (int i = 0; i < num_samples * num_gaussians_per_sample; i++) {
+        alpha_vals[i] = -1.0f;
+		depth_vals[i] = -1.0f;
+    }
 
 	// transfer the memory to gpu
 	uint32_t* d_random_pix;
 	float* d_alpha_vals;
+	float* d_depth_vals;
 	CHECK_CUDA(cudaMalloc(&d_random_pix, num_samples * sizeof(uint32_t)), debug);
 	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_samples * num_gaussians_per_sample * sizeof(float)), debug);
 	CHECK_CUDA(cudaMemcpy(d_random_pix, random_pix, num_samples * sizeof(uint32_t), cudaMemcpyHostToDevice), debug);
 	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice), debug);
 	
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
@@ -357,10 +366,12 @@ int CudaRasterizer::Rasterizer::forward(
 		out_color,
 		num_samples,
 		d_random_pix,
-		d_alpha_vals), debug)
+		d_alpha_vals,
+		d_depth_vals), debug);
 
 	// transfer back to host 
 	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost), debug);
 	CHECK_CUDA(cudaMemcpy(random_pix, d_random_pix, num_samples * sizeof(uint32_t), cudaMemcpyDeviceToHost), debug);
 
 	// output he memory to a file
@@ -368,10 +379,10 @@ int CudaRasterizer::Rasterizer::forward(
 	myfile.open("alpha_vals.csv");
 	for (int i = 0; i < num_samples; i++)
 	{
-		myfile << random_pix[i] << " ";
+		myfile << "pixel " << random_pix[i] << ", ";
 		for (int j = 0; j < num_gaussians_per_sample; j++)
 		{
-			myfile << alpha_vals[i * num_gaussians_per_sample + j] << " ";
+			myfile << alpha_vals[i * num_gaussians_per_sample + j] << " " << depth_vals[i * num_gaussians_per_sample + j] << " ";
 		}
 		myfile << std::endl;
 	}
@@ -379,8 +390,10 @@ int CudaRasterizer::Rasterizer::forward(
 	// free the memory
 	CHECK_CUDA(cudaFree(d_random_pix), debug);
 	CHECK_CUDA(cudaFree(d_alpha_vals), debug);
+	CHECK_CUDA(cudaFree(d_depth_vals), debug);
 	free(random_pix);
 	free(alpha_vals);
+	free(depth_vals);
 
 	return num_rendered;
 }
