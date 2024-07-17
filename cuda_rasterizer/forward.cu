@@ -262,6 +262,7 @@ template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
+	const uint64_t* __restrict__ point_list_keys,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
@@ -308,6 +309,7 @@ renderCUDA(
 
 	// check if the current pixel is in the selected list
 	bool selected = false;
+	float depth = -1.0f;
 	int pos = 0;
 	uint32_t contrib = 0;
     for (int i = 0; i < num_samples; i++) 
@@ -335,6 +337,10 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+
+			uint64_t coll_key = point_list_keys[range.x + progress];
+			uint32_t depth32bits = static_cast<uint32_t>(key & 0xFFFFFFFF);
+			depth = *reinterpret_cast<float*>(&depth32bits);
 		}
 		block.sync();
 
@@ -360,19 +366,22 @@ renderCUDA(
 			float alpha = min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
-			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
-			{
-				done = true;
-				continue;
-			}
 
 			// if the pixid matches 
 			if (selected && contrib < 100) 
 			{
 				int alpha_index = pos * 100 + contrib;
 				alpha_vals[alpha_index] = alpha; 
+				depth_vals[alpha_index] = depth;
 				contrib++;
+			}
+
+			// update the transmittence
+			float test_T = T * (1 - alpha);
+			if (test_T < 0.0001f)
+			{
+				done = true;
+				continue;
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
@@ -400,6 +409,7 @@ renderCUDA(
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
+	const uint64_t* point_list_keys,
 	const uint32_t* point_list,
 	int W, int H,
 	const float2* means2D,
@@ -415,6 +425,7 @@ void FORWARD::render(
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
+		point_list_keys,
 		point_list,
 		W, H,
 		means2D,
