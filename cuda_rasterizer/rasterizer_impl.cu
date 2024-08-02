@@ -323,8 +323,8 @@ int CudaRasterizer::Rasterizer::forward(
 
 	std::mt19937 gen;
 	std::uniform_int_distribution<> dis(0, width * height);
-	int num_samples = 100;
-	int num_gaussians_per_sample = 100;
+	int num_samples = width * height;
+	int num_gaussians_per_sample = 120;
 
 	// generate random numbers
 	uint32_t* random_pix = (uint32_t*)malloc(num_samples * sizeof(uint32_t));

@@ -421,7 +421,8 @@ void FORWARD::render(
 	float* out_color,
 	int num_samples,
 	uint32_t* random_pix,
-	float* alpha_vals)
+	float* alpha_vals,
+	float* depth_vals)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -437,7 +438,8 @@ void FORWARD::render(
 		out_color,
 		num_samples,
 		random_pix,
-		alpha_vals);
+		alpha_vals,
+		depth_vals);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
