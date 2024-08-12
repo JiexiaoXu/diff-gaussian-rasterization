@@ -312,14 +312,14 @@ renderCUDA(
 	float depth = -1.0f;
 	int pos = 0;
 	uint32_t contrib = 0;
-    for (int i = 0; i < num_samples; i++) 
+  for (int i = 0; i < num_samples; i++) 
 	{
-        if (random_pix[i] == pix_id) {
-            selected = true;
-			pos = i;
-            break;
-        }
+    if (random_pix[i] == pix_id) {
+      selected = true;
+      pos = i;
+      break;
     }
+  }
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -368,9 +368,9 @@ renderCUDA(
 				continue;
 
 			// if the pixid matches 
-			if (selected && contrib < 100) 
+			if (selected && contrib < 150) 
 			{
-				int alpha_index = pos * 100 + contrib;
+				int alpha_index = pos * 150 + contrib;
 				alpha_vals[alpha_index] = alpha; 
 				depth_vals[alpha_index] = depth;
 				contrib++;
@@ -422,7 +422,7 @@ void FORWARD::render(
 	int num_samples,
 	uint32_t* random_pix,
 	float* alpha_vals,
-	float* depth_vals)
+  float* depth_vals)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -439,7 +439,7 @@ void FORWARD::render(
 		num_samples,
 		random_pix,
 		alpha_vals,
-		depth_vals);
+    depth_vals);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

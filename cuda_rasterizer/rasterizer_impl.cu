@@ -321,10 +321,10 @@ int CudaRasterizer::Rasterizer::forward(
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 
-	std::mt19937 gen;
-	std::uniform_int_distribution<> dis(0, width * height);
+	// std::mt19937 gen;
+	// std::uniform_int_distribution<> dis(0, width * height);
 	int num_samples = width * height;
-	int num_gaussians_per_sample = 120;
+	int num_gaussians_per_sample = 150;
 
 	// generate random numbers
 	uint32_t* random_pix = (uint32_t*)malloc(num_samples * sizeof(uint32_t));
@@ -332,14 +332,15 @@ int CudaRasterizer::Rasterizer::forward(
 	float* depth_vals = (float*)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
 	for (int i = 0; i < num_samples ; i++) 
 	{
-		random_pix[i] = dis(gen);
+		random_pix[i] = i;
 	}
 
 	// fill alphas and depth with -1 
-	for (int i = 0; i < num_samples * num_gaussians_per_sample; i++) {
-        alpha_vals[i] = -1.0f;
+	for (uint32_t i = 0; i < num_samples * num_gaussians_per_sample; i++) 
+  {
+    alpha_vals[i] = -1.0f;
 		depth_vals[i] = -1.0f;
-    }
+  }
 
 	// transfer the memory to gpu
 	uint32_t* d_random_pix;
