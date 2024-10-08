@@ -103,11 +103,6 @@ __global__ void duplicateWithKeys(
 				uint64_t key = y * grid.x + x;
 				key <<= 32;
 				key |= *((uint32_t *)&depths[idx]);
-				if (depths[idx] < 0)
-				{
-					// print idx and depth
-					printf("idx: %d, depth: %f\n", idx, depths[idx]);
-				}
 				gaussian_keys_unsorted[off] = key;
 				gaussian_values_unsorted[off] = idx;
 				off++;
@@ -328,27 +323,35 @@ int CudaRasterizer::Rasterizer::forward(
 	const float *feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 
 	int num_samples = width * height;
-	int num_gaussians_per_sample = 150;
+	constexpr int NUM_GAUSSIANS_PER_SAMPLE = 150;
 
-	float *alpha_vals = (float *)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
-	float *depth_vals = (float *)malloc(num_samples * num_gaussians_per_sample * sizeof(float));
+	float *alpha_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float));
+	float *depth_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float));
+	float *color_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float));
 
 	// fill alphas and depth with -1
-	for (uint32_t i = 0; i < num_samples * num_gaussians_per_sample; i++)
+	for (uint32_t i = 0; i < num_samples * NUM_GAUSSIANS_PER_SAMPLE; i++)
 	{
 		alpha_vals[i] = -1.0f;
 		depth_vals[i] = -1.0f;
+		color_vals[i * 3] = -1.0f;
+		color_vals[i * 3 + 1] = -1.0f;
+		color_vals[i * 3 + 2] = -1.0f;
 	}
 
 	// transfer the memory to gpu
 	float *d_alpha_vals;
 	float *d_depth_vals;
-	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float)), debug);
-	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_samples * num_gaussians_per_sample * sizeof(float)), debug);
+	float *d_color_vals;
+	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float)), debug);
 
-	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_color_vals, color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float), cudaMemcpyHostToDevice), debug);
 
+	// Call rendering kernel
 	CHECK_CUDA(FORWARD::render(
 				   tile_grid, block,
 				   imgState.ranges,
@@ -362,33 +365,59 @@ int CudaRasterizer::Rasterizer::forward(
 				   imgState.n_contrib,
 				   background,
 				   out_color,
-				   num_samples,
 				   d_alpha_vals,
-				   d_depth_vals),
+				   d_depth_vals,
+				   d_color_vals),
 			   debug);
 
 	// transfer back to host
-	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_samples * num_gaussians_per_sample * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(color_vals, d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float), cudaMemcpyDeviceToHost), debug);
 
 	// output he memory to a file
 	std::ofstream myfile;
 	myfile.open("alpha_vals.csv");
+
+	myfile << "pixelNum,";
+	for (int i = 0; i < NUM_GAUSSIANS_PER_SAMPLE; i++)
+	{
+		myfile << "Gaussian_" << i << "_alpha," << "Gaussian_" << i << "_depth,"
+			   << "Gaussian_" << i << "_color_r," << "Gaussian_" << i << "_color_g," << "Gaussian_" << i << "_color_b";
+		if (i < NUM_GAUSSIANS_PER_SAMPLE - 1)
+		{
+			myfile << ",";
+		}
+	}
+	myfile << std::endl;
+
 	for (int i = 0; i < num_samples; i++)
 	{
-		myfile << "pixel " << i << ", ";
-		for (int j = 0; j < num_gaussians_per_sample; j++)
+
+		myfile << "pixel " << i << ",";
+
+		for (int j = 0; j < NUM_GAUSSIANS_PER_SAMPLE; j++)
 		{
-			myfile << alpha_vals[i * num_gaussians_per_sample + j] << " " << depth_vals[i * num_gaussians_per_sample + j] << " ";
+			myfile << alpha_vals[i * NUM_GAUSSIANS_PER_SAMPLE + j] << "," << depth_vals[i * NUM_GAUSSIANS_PER_SAMPLE + j] << ","
+				   << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3] << "," << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3 + 1] << ","
+				   << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3 + 2];
+			if (j < NUM_GAUSSIANS_PER_SAMPLE - 1)
+			{
+				myfile << ",";
+			}
 		}
 		myfile << std::endl;
 	}
 
+	myfile.close();
+
 	// free the memory
 	CHECK_CUDA(cudaFree(d_alpha_vals), debug);
 	CHECK_CUDA(cudaFree(d_depth_vals), debug);
+	CHECK_CUDA(cudaFree(d_color_vals), debug);
 	free(alpha_vals);
 	free(depth_vals);
+	free(color_vals);
 
 	return num_rendered;
 }

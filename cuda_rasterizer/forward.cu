@@ -271,9 +271,9 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 		uint32_t *__restrict__ n_contrib,
 		const float *__restrict__ bg_color,
 		float *__restrict__ out_color,
-		int num_samples,
 		float *__restrict__ alpha_vals,
-		float *__restrict__ depth_vals)
+		float *__restrict__ depth_vals,
+		float *__restrict__ color_vals)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -360,6 +360,10 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 				uint32_t alpha_index = pix_id * 150 + contrib;
 				alpha_vals[alpha_index] = alpha;
 				depth_vals[alpha_index] = depth;
+
+				color_vals[3 * alpha_index] = features[collected_id[j] * 3];
+				color_vals[3 * alpha_index + 1] = features[collected_id[j] * 3 + 1];
+				color_vals[3 * alpha_index + 2] = features[collected_id[j] * 3 + 2];
 				contrib++;
 			}
 
@@ -406,9 +410,9 @@ void FORWARD::render(
 	uint32_t *n_contrib,
 	const float *bg_color,
 	float *out_color,
-	int num_samples,
 	float *alpha_vals,
-	float *depth_vals)
+	float *depth_vals,
+	float *color_vals)
 {
 	renderCUDA<NUM_CHANNELS><<<grid, block>>>(
 		ranges,
@@ -422,9 +426,9 @@ void FORWARD::render(
 		n_contrib,
 		bg_color,
 		out_color,
-		num_samples,
 		alpha_vals,
-		depth_vals);
+		depth_vals,
+		color_vals);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
