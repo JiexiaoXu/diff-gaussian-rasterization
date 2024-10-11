@@ -325,24 +325,15 @@ int CudaRasterizer::Rasterizer::forward(
 	int num_samples = width * height;
 	constexpr int NUM_GAUSSIANS_PER_SAMPLE = 150;
 
-	float *alpha_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float));
-	float *depth_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float));
-	float *color_vals = (float *)malloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float));
-
-	// fill alphas and depth with -1
-	for (uint32_t i = 0; i < num_samples * NUM_GAUSSIANS_PER_SAMPLE; i++)
-	{
-		alpha_vals[i] = -1.0f;
-		depth_vals[i] = -1.0f;
-		color_vals[i * 3] = -1.0f;
-		color_vals[i * 3 + 1] = -1.0f;
-		color_vals[i * 3 + 2] = -1.0f;
-	}
+	float *alpha_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
+	float *depth_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
+	float *color_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3, sizeof(float));
 
 	// transfer the memory to gpu
 	float *d_alpha_vals;
 	float *d_depth_vals;
 	float *d_color_vals;
+
 	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
 	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
 	CHECK_CUDA(cudaMalloc(&d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float)), debug);
@@ -375,11 +366,17 @@ int CudaRasterizer::Rasterizer::forward(
 	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyDeviceToHost), debug);
 	CHECK_CUDA(cudaMemcpy(color_vals, d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float), cudaMemcpyDeviceToHost), debug);
 
+	float *bg_color = (float *)calloc(3, sizeof(float));
+	float *final_color = (float *)calloc(num_samples * 3, sizeof(float));
+
+	cudaMemcpy(bg_color, background, 3 * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(final_color, out_color, num_samples * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+
 	// output he memory to a file
 	std::ofstream myfile;
 	myfile.open("alpha_vals.csv");
 
-	myfile << "pixelNum,";
+	myfile << "pixelNum,out_color_r,out_color_g,out_color_b,bg_color_r,bg_color_g,bg_color_b,";
 	for (int i = 0; i < NUM_GAUSSIANS_PER_SAMPLE; i++)
 	{
 		myfile << "Gaussian_" << i << "_alpha," << "Gaussian_" << i << "_depth,"
@@ -394,7 +391,8 @@ int CudaRasterizer::Rasterizer::forward(
 	for (int i = 0; i < num_samples; i++)
 	{
 
-		myfile << "pixel " << i << ",";
+		myfile << "pixel " << i << "," << final_color[i] << "," << final_color[num_samples + i] << "," << final_color[2 * num_samples + i] << ",";
+		myfile << bg_color[0] << "," << bg_color[1] << "," << bg_color[2] << ",";
 
 		for (int j = 0; j < NUM_GAUSSIANS_PER_SAMPLE; j++)
 		{
@@ -418,6 +416,8 @@ int CudaRasterizer::Rasterizer::forward(
 	free(alpha_vals);
 	free(depth_vals);
 	free(color_vals);
+	free(bg_color);
+	free(final_color);
 
 	return num_rendered;
 }
