@@ -391,7 +391,7 @@ int CudaRasterizer::Rasterizer::forward(
 	for (int i = 0; i < num_samples; i++)
 	{
 
-		myfile << "pixel " << i << "," << final_color[i] << "," << final_color[num_samples + i] << "," << final_color[2 * num_samples + i] << ",";
+		myfile << i << "," << final_color[i] << "," << final_color[num_samples + i] << "," << final_color[2 * num_samples + i] << ",";
 		myfile << bg_color[0] << "," << bg_color[1] << "," << bg_color[2] << ",";
 
 		for (int j = 0; j < NUM_GAUSSIANS_PER_SAMPLE; j++)
