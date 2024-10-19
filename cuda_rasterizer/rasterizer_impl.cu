@@ -322,25 +322,26 @@ int CudaRasterizer::Rasterizer::forward(
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float *feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 
-	int num_samples = width * height;
-	constexpr int NUM_GAUSSIANS_PER_SAMPLE = 150;
-
-	float *alpha_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
-	float *depth_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
-	float *color_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3, sizeof(float));
+	float *alpha_vals = (float *)calloc(num_rendered * BLOCK_SIZE, sizeof(float));
+	float *depth_vals = (float *)calloc(num_rendered * BLOCK_SIZE, sizeof(float));
+	float *color_vals = (float *)calloc(num_rendered * BLOCK_SIZE * 3, sizeof(float));
+	uint2 *pixel_indices = (uint32_t *)calloc(weight * height, sizeof(uint2));
 
 	// transfer the memory to gpu
 	float *d_alpha_vals;
 	float *d_depth_vals;
 	float *d_color_vals;
+	float *d_pixels;
 
-	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
-	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float)), debug);
-	CHECK_CUDA(cudaMalloc(&d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_rendered * BLOCK_SIZE * sizeof(float)), debug);
+	CHECK_CUDA(cudaMalloc(&d_pixels, weight * height * sizeof(uint2)), debug);
+	CHECK_CUDA(cudaMalloc(&d_color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float)), debug);
 
-	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_color_vals, color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_pixels, pixel_indices, weight * height * sizeof(uint2), cudaMemcpyHostToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(d_color_vals, color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float), cudaMemcpyHostToDevice), debug);
 
 	// Call rendering kernel
 	CHECK_CUDA(FORWARD::render(
@@ -358,53 +359,28 @@ int CudaRasterizer::Rasterizer::forward(
 				   out_color,
 				   d_alpha_vals,
 				   d_depth_vals,
-				   d_color_vals),
+				   d_color_vals,
+				   d_pixels),
 			   debug);
 
 	// transfer back to host
-	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(color_vals, d_color_vals, num_samples * NUM_GAUSSIANS_PER_SAMPLE * 3 * sizeof(float), cudaMemcpyDeviceToHost), debug);
-
-	float *bg_color = (float *)calloc(3, sizeof(float));
-	float *final_color = (float *)calloc(num_samples * 3, sizeof(float));
-
-	cudaMemcpy(bg_color, background, 3 * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(final_color, out_color, num_samples * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(color_vals, d_color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float), cudaMemcpyDeviceToHost), debug);
+	CHECK_CUDA(cudaMemcpy(pixel_indices, d_pixels, weight * height * sizeof(uint2), cudaMemcpyDeviceToHost), debug);
 
 	// output he memory to a file
 	std::ofstream myfile;
-	myfile.open("alpha_vals.csv");
+	myfile.open("all_splat.csv");
 
-	myfile << "pixelNum,out_color_r,out_color_g,out_color_b,bg_color_r,bg_color_g,bg_color_b,";
-	for (int i = 0; i < NUM_GAUSSIANS_PER_SAMPLE; i++)
+	for (int i = 0; i < weight * height; i++)
 	{
-		myfile << "Gaussian_" << i << "_alpha," << "Gaussian_" << i << "_depth,"
-			   << "Gaussian_" << i << "_color_r," << "Gaussian_" << i << "_color_g," << "Gaussian_" << i << "_color_b";
-		if (i < NUM_GAUSSIANS_PER_SAMPLE - 1)
+		uint2 splat_range = pixel_indices[i];
+		myfile << i << ",";
+		for (int j = splat_range.x; j < splat_range.y; j++)
 		{
-			myfile << ",";
+			myfile << alpha_vals[j] << "," << depth_vals[j] << "," << color_vals[j * 3] << "," << color_vals[j * 3 + 1] << "," << color_vals[j * 3 + 2] << std::endl;
 		}
-	}
-	myfile << std::endl;
-
-	for (int i = 0; i < num_samples; i++)
-	{
-
-		myfile << "pixel " << i << "," << final_color[i] << "," << final_color[num_samples + i] << "," << final_color[2 * num_samples + i] << ",";
-		myfile << bg_color[0] << "," << bg_color[1] << "," << bg_color[2] << ",";
-
-		for (int j = 0; j < NUM_GAUSSIANS_PER_SAMPLE; j++)
-		{
-			myfile << alpha_vals[i * NUM_GAUSSIANS_PER_SAMPLE + j] << "," << depth_vals[i * NUM_GAUSSIANS_PER_SAMPLE + j] << ","
-				   << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3] << "," << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3 + 1] << ","
-				   << color_vals[i * NUM_GAUSSIANS_PER_SAMPLE * 3 + j * 3 + 2];
-			if (j < NUM_GAUSSIANS_PER_SAMPLE - 1)
-			{
-				myfile << ",";
-			}
-		}
-		myfile << std::endl;
 	}
 
 	myfile.close();
@@ -413,11 +389,11 @@ int CudaRasterizer::Rasterizer::forward(
 	CHECK_CUDA(cudaFree(d_alpha_vals), debug);
 	CHECK_CUDA(cudaFree(d_depth_vals), debug);
 	CHECK_CUDA(cudaFree(d_color_vals), debug);
+	CHECK_CUDA(cudaFree(d_pixels), debug);
 	free(alpha_vals);
 	free(depth_vals);
 	free(color_vals);
-	free(bg_color);
-	free(final_color);
+	free(pixel_indices);
 
 	return num_rendered;
 }

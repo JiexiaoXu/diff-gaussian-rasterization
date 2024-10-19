@@ -273,7 +273,8 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 		float *__restrict__ out_color,
 		float *__restrict__ alpha_vals,
 		float *__restrict__ depth_vals,
-		float *__restrict__ color_vals)
+		float *__restrict__ color_vals,
+		uint2 *__restrict__ pixel_indices)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -293,6 +294,8 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 	int toDo = range.y - range.x;
+	pixel_indices[pix_id].x = BLOCK_SIZE * range.x + block.thread_rank() * (range.y - range.x);
+	pixel_indices[pix_id].y = BLOCK_SIZE * range.y + (block.thread_rank() + 1) * (range.y - range.x);
 
 	// Allocate storage for batches of collectively fetched data.
 	__shared__ int collected_id[BLOCK_SIZE];
@@ -304,9 +307,6 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = {0};
-
-	float depth = -1.0f;
-	uint32_t contrib = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -343,8 +343,6 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float4 con_o = collected_conic_opacity[j];
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
-				continue;
 
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
@@ -352,27 +350,25 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			// Avoid numerical instabilities (see paper appendix).
 			float alpha = min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
-				continue;
-
-			// if the pixid matches
-			if (contrib < 150 && ((range.x + progress) < range.y))
-			{
-				uint32_t alpha_index = pix_id * 150 + contrib;
-				alpha_vals[alpha_index] = alpha;
-				depth_vals[alpha_index] = depth;
-
-				color_vals[3 * alpha_index] = features[collected_id[j] * 3];
-				color_vals[3 * alpha_index + 1] = features[collected_id[j] * 3 + 1];
-				color_vals[3 * alpha_index + 2] = features[collected_id[j] * 3 + 2];
-				contrib++;
-			}
+				alpha = 0.0;
 
 			// update the transmittence
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
+			// if (test_T < 0.0001f)
+			// {
+			// 	done = true;
+			// 	continue;
+			// }
+
+			if ((range.x + progress) < range.y)
 			{
-				done = true;
-				continue;
+				uint32_t index = BLOCK_SIZE * range.x + block.thread_rank() * (range.y - range.x) + contributor - 1;
+				alpha_vals[index] = alpha;
+				depth_vals[index] = depth;
+
+				color_vals[3 * index] = features[collected_id[j] * 3];
+				color_vals[3 * index + 1] = features[collected_id[j] * 3 + 1];
+				color_vals[3 * index + 2] = features[collected_id[j] * 3 + 2];
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
@@ -394,7 +390,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
-			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+			out_color[ch * H * W + pix_id] = bg_color[ch];
 	}
 }
 void FORWARD::render(
@@ -412,7 +408,8 @@ void FORWARD::render(
 	float *out_color,
 	float *alpha_vals,
 	float *depth_vals,
-	float *color_vals)
+	float *color_vals,
+	uint2 *pixel_indices)
 {
 	renderCUDA<NUM_CHANNELS><<<grid, block>>>(
 		ranges,
@@ -428,7 +425,8 @@ void FORWARD::render(
 		out_color,
 		alpha_vals,
 		depth_vals,
-		color_vals);
+		color_vals,
+		pixel_indices);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

@@ -63,7 +63,8 @@ namespace FORWARD
 		float *out_color,
 		float *alpha_vals,
 		float *depth_vals,
-		float *color_vals);
+		float *color_vals,
+		uint2 *pixel_indices);
 }
 
 #endif
