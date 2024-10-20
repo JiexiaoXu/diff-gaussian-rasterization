@@ -298,6 +298,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	__shared__ float collected_depth[BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -305,7 +306,6 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = {0};
 
-	float depth = -1.0f;
 	uint32_t contrib = 0;
 
 	// Iterate over batches until all done or range is complete
@@ -327,7 +327,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 
 			uint64_t coll_key = point_list_keys[range.x + progress];
 			uint32_t depth32bits = static_cast<uint32_t>(coll_key & 0xFFFFFFFF);
-			depth = *reinterpret_cast<float *>(&depth32bits);
+			collected_depth[block.thread_rank()] = *reinterpret_cast<float *>(&depth32bits);
 		}
 		block.sync();
 
@@ -359,7 +359,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			{
 				uint32_t alpha_index = pix_id * 150 + contrib;
 				alpha_vals[alpha_index] = alpha;
-				depth_vals[alpha_index] = depth;
+				depth_vals[alpha_index] = collected_depth[j];
 
 				color_vals[3 * alpha_index] = features[collected_id[j] * 3];
 				color_vals[3 * alpha_index + 1] = features[collected_id[j] * 3 + 1];
