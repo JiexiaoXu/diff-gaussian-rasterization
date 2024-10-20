@@ -51,7 +51,6 @@ namespace FORWARD
 	void render(
 		const dim3 grid, dim3 block,
 		const uint2 *ranges,
-		const uint64_t *point_list_keys,
 		const uint32_t *point_list,
 		int W, int H,
 		const float2 *points_xy_image,
@@ -60,11 +59,7 @@ namespace FORWARD
 		float *final_T,
 		uint32_t *n_contrib,
 		const float *bg_color,
-		float *out_color,
-		float *alpha_vals,
-		float *depth_vals,
-		float *color_vals,
-		uint2 *pixel_indices);
+		float *out_color);
 }
 
 #endif

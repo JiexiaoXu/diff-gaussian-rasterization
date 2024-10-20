@@ -319,35 +319,34 @@ int CudaRasterizer::Rasterizer::forward(
 			imgState.ranges);
 	CHECK_CUDA(, debug)
 
+	uint64_t *splat_keys = (uint64_t *)calloc(num_rendered, sizeof(uint64_t));
+	CHECK_CUDA(cudaMemcpy(splat_keys, binningState.point_list_keys, num_rendered * sizeof(uint64_t), cudaMemcpyDeviceToHost), debug);
+	std::ofstream myfile;
+	myfile.open("splat_tile.csv");
+
+	uint64_t prevtile = 0;
+	for (int i = 0; i < num_rendered; i++)
+	{
+		uint64_t coll_key = splat_keys[i];
+		uint32_t depth32bits = static_cast<uint32_t>(coll_key & 0xFFFFFFFF);
+		float depth = *reinterpret_cast<float *>(&depth32bits);
+		uint32_t tile_id = coll_key >> 32;
+
+		if (tile_id != prevtile)
+		{
+			myfile << "\n";
+			prevtile = tile_id;
+		}
+
+		myfile << depth << ",";
+	}
+	myfile.close();
+
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float *feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
-
-	float *alpha_vals = (float *)calloc(num_rendered * BLOCK_SIZE, sizeof(float));
-	float *depth_vals = (float *)calloc(num_rendered * BLOCK_SIZE, sizeof(float));
-	float *color_vals = (float *)calloc(num_rendered * BLOCK_SIZE * 3, sizeof(float));
-	uint2 *pixel_indices = (uint32_t *)calloc(weight * height, sizeof(uint2));
-
-	// transfer the memory to gpu
-	float *d_alpha_vals;
-	float *d_depth_vals;
-	float *d_color_vals;
-	float *d_pixels;
-
-	CHECK_CUDA(cudaMalloc(&d_alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float)), debug);
-	CHECK_CUDA(cudaMalloc(&d_depth_vals, num_rendered * BLOCK_SIZE * sizeof(float)), debug);
-	CHECK_CUDA(cudaMalloc(&d_pixels, weight * height * sizeof(uint2)), debug);
-	CHECK_CUDA(cudaMalloc(&d_color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float)), debug);
-
-	CHECK_CUDA(cudaMemcpy(d_alpha_vals, alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_depth_vals, depth_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_pixels, pixel_indices, weight * height * sizeof(uint2), cudaMemcpyHostToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(d_color_vals, color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float), cudaMemcpyHostToDevice), debug);
-
-	// Call rendering kernel
 	CHECK_CUDA(FORWARD::render(
 				   tile_grid, block,
 				   imgState.ranges,
-				   binningState.point_list_keys,
 				   binningState.point_list,
 				   width, height,
 				   geomState.means2D,
@@ -356,44 +355,8 @@ int CudaRasterizer::Rasterizer::forward(
 				   imgState.accum_alpha,
 				   imgState.n_contrib,
 				   background,
-				   out_color,
-				   d_alpha_vals,
-				   d_depth_vals,
-				   d_color_vals,
-				   d_pixels),
-			   debug);
-
-	// transfer back to host
-	CHECK_CUDA(cudaMemcpy(alpha_vals, d_alpha_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(depth_vals, d_depth_vals, num_rendered * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(color_vals, d_color_vals, num_rendered * BLOCK_SIZE * 3 * sizeof(float), cudaMemcpyDeviceToHost), debug);
-	CHECK_CUDA(cudaMemcpy(pixel_indices, d_pixels, weight * height * sizeof(uint2), cudaMemcpyDeviceToHost), debug);
-
-	// output he memory to a file
-	std::ofstream myfile;
-	myfile.open("all_splat.csv");
-
-	for (int i = 0; i < weight * height; i++)
-	{
-		uint2 splat_range = pixel_indices[i];
-		myfile << i << ",";
-		for (int j = splat_range.x; j < splat_range.y; j++)
-		{
-			myfile << alpha_vals[j] << "," << depth_vals[j] << "," << color_vals[j * 3] << "," << color_vals[j * 3 + 1] << "," << color_vals[j * 3 + 2] << std::endl;
-		}
-	}
-
-	myfile.close();
-
-	// free the memory
-	CHECK_CUDA(cudaFree(d_alpha_vals), debug);
-	CHECK_CUDA(cudaFree(d_depth_vals), debug);
-	CHECK_CUDA(cudaFree(d_color_vals), debug);
-	CHECK_CUDA(cudaFree(d_pixels), debug);
-	free(alpha_vals);
-	free(depth_vals);
-	free(color_vals);
-	free(pixel_indices);
+				   out_color),
+			   debug)
 
 	return num_rendered;
 }

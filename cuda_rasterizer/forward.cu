@@ -261,7 +261,6 @@ template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	renderCUDA(
 		const uint2 *__restrict__ ranges,
-		const uint64_t *__restrict__ point_list_keys,
 		const uint32_t *__restrict__ point_list,
 		int W, int H,
 		const float2 *__restrict__ points_xy_image,
@@ -270,11 +269,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 		float *__restrict__ final_T,
 		uint32_t *__restrict__ n_contrib,
 		const float *__restrict__ bg_color,
-		float *__restrict__ out_color,
-		float *__restrict__ alpha_vals,
-		float *__restrict__ depth_vals,
-		float *__restrict__ color_vals,
-		uint2 *__restrict__ pixel_indices)
+		float *__restrict__ out_color)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -294,8 +289,6 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 	int toDo = range.y - range.x;
-	pixel_indices[pix_id].x = BLOCK_SIZE * range.x + block.thread_rank() * (range.y - range.x);
-	pixel_indices[pix_id].y = BLOCK_SIZE * range.y + (block.thread_rank() + 1) * (range.y - range.x);
 
 	// Allocate storage for batches of collectively fetched data.
 	__shared__ int collected_id[BLOCK_SIZE];
@@ -324,10 +317,6 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
-
-			uint64_t coll_key = point_list_keys[range.x + progress];
-			uint32_t depth32bits = static_cast<uint32_t>(coll_key & 0xFFFFFFFF);
-			depth = *reinterpret_cast<float *>(&depth32bits);
 		}
 		block.sync();
 
@@ -343,6 +332,8 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float4 con_o = collected_conic_opacity[j];
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			if (power > 0.0f)
+				continue;
 
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
@@ -350,25 +341,12 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			// Avoid numerical instabilities (see paper appendix).
 			float alpha = min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
-				alpha = 0.0;
-
-			// update the transmittence
+				continue;
 			float test_T = T * (1 - alpha);
-			// if (test_T < 0.0001f)
-			// {
-			// 	done = true;
-			// 	continue;
-			// }
-
-			if ((range.x + progress) < range.y)
+			if (test_T < 0.0001f)
 			{
-				uint32_t index = BLOCK_SIZE * range.x + block.thread_rank() * (range.y - range.x) + contributor - 1;
-				alpha_vals[index] = alpha;
-				depth_vals[index] = depth;
-
-				color_vals[3 * index] = features[collected_id[j] * 3];
-				color_vals[3 * index + 1] = features[collected_id[j] * 3 + 1];
-				color_vals[3 * index + 2] = features[collected_id[j] * 3 + 2];
+				done = true;
+				continue;
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
@@ -390,13 +368,13 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
-			out_color[ch * H * W + pix_id] = bg_color[ch];
+			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 	}
 }
+
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2 *ranges,
-	const uint64_t *point_list_keys,
 	const uint32_t *point_list,
 	int W, int H,
 	const float2 *means2D,
@@ -405,15 +383,10 @@ void FORWARD::render(
 	float *final_T,
 	uint32_t *n_contrib,
 	const float *bg_color,
-	float *out_color,
-	float *alpha_vals,
-	float *depth_vals,
-	float *color_vals,
-	uint2 *pixel_indices)
+	float *out_color)
 {
 	renderCUDA<NUM_CHANNELS><<<grid, block>>>(
 		ranges,
-		point_list_keys,
 		point_list,
 		W, H,
 		means2D,
@@ -422,11 +395,7 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
-		out_color,
-		alpha_vals,
-		depth_vals,
-		color_vals,
-		pixel_indices);
+		out_color);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
