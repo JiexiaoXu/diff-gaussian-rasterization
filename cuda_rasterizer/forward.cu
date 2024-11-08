@@ -355,9 +355,9 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 				continue;
 
 			// if the pixid matches
-			if (contrib < 150 && ((range.x + progress) < range.y))
+			if (contrib < 500 && ((range.x + progress) < range.y))
 			{
-				uint32_t alpha_index = pix_id * 150 + contrib;
+				uint32_t alpha_index = pix_id * 500 + contrib;
 				alpha_vals[alpha_index] = alpha;
 				depth_vals[alpha_index] = collected_depth[j];
 
@@ -369,21 +369,24 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 
 			// update the transmittence
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
+			// if (test_T < 0.0001f)
+			// {
+			// 	done = true;
+			// 	continue;
+			// }
+
+			if (test_T > 0.0001f)
 			{
-				done = true;
-				continue;
+				// Eq. (3) from 3D Gaussian splatting paper.
+				for (int ch = 0; ch < CHANNELS; ch++)
+					C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+
+				T = test_T;
+
+				// Keep track of last range entry to update this
+				// pixel.
+				last_contributor = contributor;
 			}
-
-			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
-
-			T = test_T;
-
-			// Keep track of last range entry to update this
-			// pixel.
-			last_contributor = contributor;
 		}
 	}
 
@@ -397,6 +400,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 	}
 }
+
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2 *ranges,

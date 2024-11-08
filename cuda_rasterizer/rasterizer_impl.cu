@@ -323,7 +323,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float *feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 
 	int num_samples = width * height;
-	constexpr int NUM_GAUSSIANS_PER_SAMPLE = 150;
+	constexpr int NUM_GAUSSIANS_PER_SAMPLE = 500;
 
 	float *alpha_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
 	float *depth_vals = (float *)calloc(num_samples * NUM_GAUSSIANS_PER_SAMPLE, sizeof(float));
