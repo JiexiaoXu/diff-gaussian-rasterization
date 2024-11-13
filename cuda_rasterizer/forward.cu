@@ -355,7 +355,7 @@ __global__ void __launch_bounds__(BLOCK_X *BLOCK_Y)
 				continue;
 
 			// if the pixid matches
-			if (contrib < 500 && ((range.x + progress) < range.y))
+			if (contrib < 500)
 			{
 				uint32_t alpha_index = pix_id * 500 + contrib;
 				alpha_vals[alpha_index] = alpha;
